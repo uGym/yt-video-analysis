@@ -5,12 +5,24 @@ import face_recognition
 import re
 import csv
 import os
+import time
 from sklearn.cluster import KMeans
 from scipy.stats import entropy as scipy_entropy
 
 
-api_key = "YOUTUBE_API_KEY"
+api_key = "AIzaSyAlQrNzNL4VUyw0jmlRjsX_C_45r7KIMh0"
 
+def iso8601_duration_to_seconds(duration):
+    duration_regex = re.compile(r'PT((?P<hours>\d+)H)?((?P<minutes>\d+)M)?((?P<seconds>\d+)S)?')
+    matches = duration_regex.match(duration)
+    if not matches:
+        return 0
+
+    hours = int(matches.group('hours')) if matches.group('hours') else 0
+    minutes = int(matches.group('minutes')) if matches.group('minutes') else 0
+    seconds = int(matches.group('seconds')) if matches.group('seconds') else 0
+
+    return hours * 3600 + minutes * 60 + seconds
 
 def save_to_csv(data, filename="video_data.csv"):
     mode = 'a' if os.path.isfile(filename) else 'w'
@@ -99,10 +111,26 @@ def find_dominant_color(img, sample_size=10000, clusters=5):
 
 
 def fetch_video_ids(api_key, query, max_results):
-    return [item['id']['videoId'] for item in requests.get("https://www.googleapis.com/youtube/v3/search", params={'part': 'id','q': query,'type': 'video','key': api_key,'maxResults': max_results}).json()['items']]
+    video_ids = []
+    params = {'part': 'id', 'q': query, 'type': 'video', 'key': api_key, 'maxResults': 50}
+    while max_results > 1:
+        response = requests.get("https://www.googleapis.com/youtube/v3/search", params=params).json()
+        for item in response['items']:
+            video_id = item['id']['videoId']
+            video_details = requests.get(f"https://www.googleapis.com/youtube/v3/videos?id={video_id}&key={api_key}&part=contentDetails").json()
+            duration = video_details['items'][0]['contentDetails']['duration']
+            if iso8601_duration_to_seconds(duration) > 60:
+                video_ids.append(video_id)
+                max_results -= 1
+        if 'nextPageToken' in response:
+            params['pageToken'] = response['nextPageToken']
+        else:
+            break
+    return video_ids
 
 
 video_ids = fetch_video_ids(api_key, "gaming", 200)
+counter = 1
 
 for id in video_ids:
     image = fetch_thumbnail(thumbnail_url(id, api_key))
@@ -134,3 +162,7 @@ for id in video_ids:
     ]
 
     save_to_csv(data)
+
+    print(f"Processed video {counter}: {video_data['title']}")
+    counter += 1
+    time.sleep(1)
