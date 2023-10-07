@@ -11,7 +11,7 @@ from sklearn.cluster import KMeans
 from scipy.stats import entropy as scipy_entropy
 
 
-api_key = "YT_API_KEY"
+api_key = "AIzaSyAlQrNzNL4VUyw0jmlRjsX_C_45r7KIMh0"
 
 def iso8601_duration_to_seconds(duration):
     duration_regex = re.compile(r'PT((?P<hours>\d+)H)?((?P<minutes>\d+)M)?((?P<seconds>\d+)S)?')
