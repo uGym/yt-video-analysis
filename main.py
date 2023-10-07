@@ -6,6 +6,7 @@ import re
 import csv
 import os
 import time
+from datetime import datetime, timezone
 from sklearn.cluster import KMeans
 from scipy.stats import entropy as scipy_entropy
 
@@ -32,7 +33,8 @@ def save_to_csv(data, filename="video_data.csv"):
             writer.writerow(["video_id", "video_title", "title_length", "uppercase_count", "lowercase_count",
                              "special_characters_count", "emoji_count", "at_tags_count", "dominant_color_hex",
                              "num_edges", "img_entropy", "description_length", "hashtags_count", "urls_count",
-                             "tags", "duration", "view_count", "like_count", "comment_count", "num_faces"])
+                             "tags", "duration", "view_count", "like_count", "comment_count", "subscriber_count",
+                             "seconds_since_upload", "num_faces"])
         writer.writerow(data)
 
 
@@ -57,6 +59,17 @@ def video_details(video_id, api_key):
         params={"id": video_id, "key": api_key, "part": "snippet,statistics,contentDetails"}
     ).json()['items'][0]
 
+    channel_id = item['snippet']['channelId']
+    channel_data = requests.get(
+        "https://www.googleapis.com/youtube/v3/channels",
+        params={"id": channel_id, "key": api_key, "part": "statistics"}
+    ).json()['items'][0]
+
+    published_at = item['snippet']['publishedAt']
+    published_at_datetime = datetime.fromisoformat(published_at[:-1]).replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    seconds_since_upload = (now - published_at_datetime).total_seconds()
+
     data = {
         "title": item['snippet']['title'],
         "description": item['snippet']['description'].replace('\n', ' '),
@@ -64,7 +77,9 @@ def video_details(video_id, api_key):
         "duration": item['contentDetails']['duration'],
         "view_count": int(item['statistics']['viewCount']),
         "like_count": int(item['statistics'].get('likeCount', 0)),
-        "comment_count": int(item['statistics'].get('commentCount', 0))
+        "comment_count": int(item['statistics'].get('commentCount', 0)),
+        "subscriber_count": int(channel_data['statistics'].get('subscriberCount', 0)),
+        "seconds_since_upload": int(seconds_since_upload)
     }
 
     return data
@@ -158,11 +173,13 @@ for id in video_ids:
         video_data["view_count"],
         video_data["like_count"],
         video_data["comment_count"],
+        video_data["subscriber_count"],
+        video_data["seconds_since_upload"],
         thumb_data[3]
     ]
 
     save_to_csv(data)
 
-    print(f"Processed video {counter}: {video_data['title']}")
+    print(f"Processed video {counter} (since upload [s] = {video_data['seconds_since_upload']}): {video_data['title']}")
     counter += 1
     time.sleep(1)
