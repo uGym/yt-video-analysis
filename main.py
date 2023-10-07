@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from sklearn.cluster import KMeans
 from scipy.stats import entropy as scipy_entropy
 
-
-api_key = "AIzaSyAlQrNzNL4VUyw0jmlRjsX_C_45r7KIMh0"
+channel_data_dict = {}
+api_key = "YOUTUBE_API_KEY"
 
 def iso8601_duration_to_seconds(duration):
     duration_regex = re.compile(r'PT((?P<hours>\d+)H)?((?P<minutes>\d+)M)?((?P<seconds>\d+)S)?')
@@ -31,10 +31,10 @@ def save_to_csv(data, filename="video_data.csv"):
         writer = csv.writer(file)
         if mode == 'w':
             writer.writerow(["video_id", "video_title", "title_length", "uppercase_count", "lowercase_count",
-                             "special_characters_count", "emoji_count", "at_tags_count", "dominant_color_hex",
-                             "num_edges", "img_entropy", "description_length", "hashtags_count", "urls_count",
-                             "tags", "duration", "view_count", "like_count", "comment_count", "subscriber_count",
-                             "seconds_since_upload", "num_faces"])
+                             "special_characters_count", "emoji_count", "at_tags_count", "dominant_color_R",
+                             "dominant_color_G", "dominant_color_B", "num_edges", "img_entropy", "description_length",
+                             "hashtags_count", "urls_count", "tag_count", "duration", "view_count", "like_count",
+                             "comment_count", "subscriber_count", "seconds_since_upload", "num_faces"])
         writer.writerow(data)
 
 
@@ -52,37 +52,45 @@ def title_description_data(title, description):
     }
     return data
 
+def fetch_channel_data(channel_id, api_key):
+    if channel_id not in channel_data_dict:
+        channel_data = requests.get(
+            "https://www.googleapis.com/youtube/v3/channels",
+            params={"id": channel_id, "key": api_key, "part": "statistics"}
+        ).json()['items'][0]
+        channel_data_dict[channel_id] = channel_data
 
-def video_details(video_id, api_key):
-    item = requests.get(
+    return channel_data_dict[channel_id]
+
+def video_details(video_ids, api_key):
+    items = requests.get(
         "https://www.googleapis.com/youtube/v3/videos",
-        params={"id": video_id, "key": api_key, "part": "snippet,statistics,contentDetails"}
-    ).json()['items'][0]
+        params={"id": ','.join(video_ids), "key": api_key, "part": "snippet,statistics,contentDetails"}
+    ).json()['items']
 
-    channel_id = item['snippet']['channelId']
-    channel_data = requests.get(
-        "https://www.googleapis.com/youtube/v3/channels",
-        params={"id": channel_id, "key": api_key, "part": "statistics"}
-    ).json()['items'][0]
+    details = {}
+    for item in items:
+        channel_id = item['snippet']['channelId']
+        channel_data = fetch_channel_data(channel_id, api_key)
+        published_at = item['snippet']['publishedAt']
+        published_at_datetime = datetime.fromisoformat(published_at[:-1]).replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        seconds_since_upload = (now - published_at_datetime).total_seconds()
 
-    published_at = item['snippet']['publishedAt']
-    published_at_datetime = datetime.fromisoformat(published_at[:-1]).replace(tzinfo=timezone.utc)
-    now = datetime.now(timezone.utc)
-    seconds_since_upload = (now - published_at_datetime).total_seconds()
+        data = {
+            "title": item['snippet']['title'],
+            "description": item['snippet']['description'].replace('\n', ' '),
+            "tag_count": len(item['snippet'].get('tags', [])),
+            "duration": item['contentDetails']['duration'],
+            "view_count": int(item['statistics']['viewCount']),
+            "like_count": int(item['statistics'].get('likeCount', 0)),
+            "comment_count": int(item['statistics'].get('commentCount', 0)),
+            "subscriber_count": int(channel_data['statistics'].get('subscriberCount', 0)),
+            "seconds_since_upload": int(seconds_since_upload)
+        }
+        details[item['id']] = data
 
-    data = {
-        "title": item['snippet']['title'],
-        "description": item['snippet']['description'].replace('\n', ' '),
-        "tags": item['snippet'].get('tags', []),
-        "duration": item['contentDetails']['duration'],
-        "view_count": int(item['statistics']['viewCount']),
-        "like_count": int(item['statistics'].get('likeCount', 0)),
-        "comment_count": int(item['statistics'].get('commentCount', 0)),
-        "subscriber_count": int(channel_data['statistics'].get('subscriberCount', 0)),
-        "seconds_since_upload": int(seconds_since_upload)
-    }
-
-    return data
+    return details
 
 
 def thumbnail_url(video_id, api_key):
@@ -97,7 +105,8 @@ def fetch_thumbnail(url):
 
 def entropy(hist):
     hist = hist / np.sum(hist)
-    return scipy_entropy(hist)
+    ent = scipy_entropy(hist)
+    return int(round(ent.item()))
 
 
 def thumbnail_details(img):
@@ -122,64 +131,82 @@ def find_dominant_color(img, sample_size=10000, clusters=5):
     samples = img.reshape((-1, 3))[np.random.choice(img.shape[0] * img.shape[1], sample_size, replace=False)]
     kmeans = KMeans(n_clusters=clusters, n_init=10).fit(samples)
     labels, counts = np.unique(kmeans.labels_, return_counts=True)
-    return "#{:02x}{:02x}{:02x}".format(*kmeans.cluster_centers_[labels[np.argmax(counts)]].astype(np.uint8))
+    dominant_color = kmeans.cluster_centers_[labels[np.argmax(counts)]].astype(np.uint8)
+    return dominant_color[0], dominant_color[1], dominant_color[2]
 
 
-def fetch_video_ids(api_key, query, max_results):
+def fetch_video_ids(api_key, category_id, max_results):
     video_ids = []
-    params = {'part': 'id', 'q': query, 'type': 'video', 'key': api_key, 'maxResults': 50}
-    while max_results > 1:
+    params = {
+        'part': 'id',
+        'videoCategoryId': category_id,
+        'type': 'video',
+        'key': api_key,
+        'maxResults': 100,
+        'fields': 'items/id,nextPageToken'
+    }
+    fetched = 0
+    while max_results > 0:
         response = requests.get("https://www.googleapis.com/youtube/v3/search", params=params).json()
         for item in response['items']:
-            video_id = item['id']['videoId']
-            video_details = requests.get(f"https://www.googleapis.com/youtube/v3/videos?id={video_id}&key={api_key}&part=contentDetails").json()
-            duration = video_details['items'][0]['contentDetails']['duration']
-            if iso8601_duration_to_seconds(duration) > 60:
-                video_ids.append(video_id)
-                max_results -= 1
+            video_ids.append(item['id']['videoId'])
+            max_results -= 1
+            fetched += 1
+            print(f"Fetched {fetched} / {fetched + max_results} videos")
+            if max_results <= 0:
+                break
         if 'nextPageToken' in response:
             params['pageToken'] = response['nextPageToken']
         else:
             break
+        time.sleep(1)
     return video_ids
 
 
-video_ids = fetch_video_ids(api_key, "gaming", 200)
+video_ids = fetch_video_ids(api_key, "minecraft suomi", 100)
 counter = 1
 
-for id in video_ids:
-    image = fetch_thumbnail(thumbnail_url(id, api_key))
-    thumb_data = thumbnail_details(image)
-    video_data = video_details(id, api_key)
-    title_desc_data = title_description_data(video_data["title"], video_data["description"])
+batch_size = 50
 
-    data = [
-        id,
-        video_data["title"],
-        title_desc_data["title_length"],
-        title_desc_data["uppercase_count"],
-        title_desc_data["lowercase_count"],
-        title_desc_data["special_characters_count"],
-        title_desc_data["emoji_count"],
-        title_desc_data["at_tags_count"],
-        thumb_data[0],
-        thumb_data[1],
-        thumb_data[2],
-        title_desc_data["description_length"],
-        title_desc_data["hashtags_count"],
-        title_desc_data["urls_count"],
-        ",".join(video_data["tags"]),
-        video_data["duration"],
-        video_data["view_count"],
-        video_data["like_count"],
-        video_data["comment_count"],
-        video_data["subscriber_count"],
-        video_data["seconds_since_upload"],
-        thumb_data[3]
-    ]
+for i in range(0, len(video_ids), batch_size):
+    batch_ids = video_ids[i:i + batch_size]
+    details = video_details(batch_ids, api_key)
 
-    save_to_csv(data)
+    for video_id, video_data in details.items():
+        image = fetch_thumbnail(thumbnail_url(video_id, api_key))
+        thumb_data = thumbnail_details(image)
+        title_desc_data = title_description_data(video_data["title"], video_data["description"])
 
-    print(f"Processed video {counter} (since upload [s] = {video_data['seconds_since_upload']}): {video_data['title']}")
-    counter += 1
-    time.sleep(1)
+        dominant_color_R, dominant_color_G, dominant_color_B = thumb_data[0]
+
+        data = [
+            video_id,
+            video_data["title"],
+            title_desc_data["title_length"],
+            title_desc_data["uppercase_count"],
+            title_desc_data["lowercase_count"],
+            title_desc_data["special_characters_count"],
+            title_desc_data["emoji_count"],
+            title_desc_data["at_tags_count"],
+            dominant_color_R,
+            dominant_color_G,
+            dominant_color_B,
+            thumb_data[1],
+            thumb_data[2],
+            title_desc_data["description_length"],
+            title_desc_data["hashtags_count"],
+            title_desc_data["urls_count"],
+            video_data["tag_count"],
+            iso8601_duration_to_seconds(video_data["duration"]),
+            video_data["view_count"],
+            video_data["like_count"],
+            video_data["comment_count"],
+            video_data["subscriber_count"],
+            video_data["seconds_since_upload"],
+            thumb_data[3]
+        ]
+
+        save_to_csv(data)
+
+        print(f"Processed video: {video_id} ID={counter}: {video_data['title']}")
+        counter += 1
