@@ -17,7 +17,7 @@ def cnn():
     model = build_model(X_train_scaled.shape[1], num_classes)
     model.fit(X_train_scaled, y_train, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_data=(X_val_scaled, y_val))
 
-    evaluate_model(model, X_val_scaled, y_val, X_test_scaled, y_test)
+    evaluate_model(model, X_train_scaled, y_train, X_val_scaled, y_val, X_test_scaled, y_test)
 
 def build_model(input_dim, num_classes):
     model = Sequential()
@@ -28,8 +28,9 @@ def build_model(input_dim, num_classes):
     model.compile(loss=LOSS_FUNC, optimizer=OPTIMIZER, metrics=['accuracy'])
     return model
 
-def evaluate_model(model, X_val, y_val, X_test, y_test):
+def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test):
+    train_loss, train_accuracy = model.evaluate(X_train, y_train)
     val_loss, val_accuracy = model.evaluate(X_val, y_val)
     test_loss, test_accuracy = model.evaluate(X_test, y_test)
-    print(f'Validation Accuracy: {val_accuracy}\nTest Accuracy: {test_accuracy}')
+    print(f'Training Accuracy: {train_accuracy}\nValidation Accuracy: {val_accuracy}\nTest Accuracy: {test_accuracy}')
     plot_model(model, to_file='../img/model_plot.png', show_shapes=True, show_layer_names=True)

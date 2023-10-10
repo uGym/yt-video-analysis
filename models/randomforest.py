@@ -16,11 +16,12 @@ def randomforest():
     rf_model = RandomForestClassifier(criterion=CRITERION, max_depth=MAX_DEPTH, min_samples_leaf=MIN_SAMPLES_LEAF, min_samples_split=MIN_SAMPLES_SPLIT, n_estimators=N_ESTIMATORS)
     rf_model.fit(X_train_scaled, y_train)
 
-    y_preds = { 'val': rf_model.predict(X_val_scaled), 'test': rf_model.predict(X_test_scaled) }
-    accuracies = { key: accuracy_score(y_val if key == 'val' else y_test, pred) for key, pred in y_preds.items() }
-    print(f"Validation Accuracy: {accuracies['val']}\nTest Accuracy: {accuracies['test']}")
+    y_preds = { 'train': rf_model.predict(X_train_scaled), 'val': rf_model.predict(X_val_scaled), 'test': rf_model.predict(X_test_scaled) }
+    accuracies = { key: accuracy_score(y_train if key == 'train' else (y_val if key == 'val' else y_test), pred) for key, pred in y_preds.items() }
+    print(f"Training Accuracy: {accuracies['train']}\nValidation Accuracy: {accuracies['val']}\nTest Accuracy: {accuracies['test']}")
 
     plot_features_and_tree(rf_model, feature_names)
+
 
 def plot_features_and_tree(model, feature_names):
     importances = model.feature_importances_
